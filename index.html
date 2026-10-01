@@ -18,7 +18,7 @@
   </header>
 
   <main>
-    <p class="inspiration-line">This project was inspired by the course material of MATH 249 - Intro to Combinatorics (Advanced Level), taught at University of Waterloo by Professor Stephen Melczer. See more at <a href="https://enumeration.ca" target="_blank" rel="noopener">enumeration.ca</a></p>
+    <p class="inspiration-line">This project was inspired by the course material of MATH 249 at University of Waterloo, taught by Professor Stephen Melczer. See more at <a href="https://enumeration.ca" target="_blank" rel="noopener">enumeration.ca</a></p>
 
 <div class="checker-card">
   <p class="lead">Enter a regular expression using only <code>0</code>, <code>1</code>, <code>*</code>, <code>(</code> and <code>)</code>. A regex is ambiguous if some word can match it in more than one way.</p>
@@ -45,6 +45,7 @@
   <button type="button" class="chip" data-regex="0*0*">0*0*</button>
   <button type="button" class="chip" data-regex="(00)*(000)*">(00)*(000)*</button>
   <button type="button" class="chip" data-regex="(0*)*">(0*)*</button>
+  <button type="button" class="chip" data-regex="1*(00*11*)*0*">1*(00*11*)*0*</button>
 </div>
 
 <details class="how-it-works">
@@ -55,17 +56,426 @@
   </main>
 
   <script>
-    const knownAmbiguous = ['0*0*', '(00)*(000)*', '(0*)*', '0*1*0*', '1*1*'];
-    const knownUnambiguous = ['(01)*', '0*1*', '0*0', '1*0*', '(01)*0'];
+    // ============ PARSER ============
+    class Parser {
+      constructor(input) {
+        this.input = input;
+        this.pos = 0;
+      }
 
-    function checkAmbiguity(regex) {
-      if (knownAmbiguous.includes(regex)) return { ambiguous: true };
-      if (knownUnambiguous.includes(regex)) return { ambiguous: false };
-      if (/\([^)]*\*\)\*/.test(regex)) return { ambiguous: true };
-      if (/0\*0\*/.test(regex) || /1\*1\*/.test(regex)) return { ambiguous: true };
-      return { ambiguous: false };
+      parse() {
+        const ast = this.parseExpr();
+        if (this.pos < this.input.length) {
+          throw new Error(`Unexpected character '${this.input[this.pos]}' at position ${this.pos}`);
+        }
+        return ast;
+      }
+
+      parseExpr() {
+        return this.parseConcat();
+      }
+
+      parseConcat() {
+        let left = this.parseUnion();
+        while (this.pos < this.input.length) {
+          const c = this.input[this.pos];
+          if (c === '0' || c === '1' || c === '(') {
+            const right = this.parseUnion();
+            left = { type: 'cat', left, right };
+          } else {
+            break;
+          }
+        }
+        return left;
+      }
+
+      parseUnion() {
+        let left = this.parseStar();
+        while (this.pos < this.input.length && this.input[this.pos] === '|') {
+          this.pos++;
+          const right = this.parseStar();
+          left = { type: 'union', left, right };
+        }
+        return left;
+      }
+
+      parseStar() {
+        let node = this.parseAtom();
+        while (this.pos < this.input.length && this.input[this.pos] === '*') {
+          this.pos++;
+          node = { type: 'star', child: node };
+        }
+        return node;
+      }
+
+      parseAtom() {
+        if (this.pos >= this.input.length) {
+          throw new Error('Unexpected end of input');
+        }
+        const c = this.input[this.pos];
+        if (c === '0' || c === '1') {
+          this.pos++;
+          return { type: 'sym', value: c };
+        }
+        if (c === '(') {
+          this.pos++;
+          const inner = this.parseExpr();
+          if (this.pos >= this.input.length || this.input[this.pos] !== ')') {
+            throw new Error('Missing closing parenthesis');
+          }
+          this.pos++;
+          return inner;
+        }
+        throw new Error(`Unexpected character '${c}' at position ${this.pos}`);
+      }
     }
 
+    // ============ AMBIGUITY CHECKER ============
+    class AmbiguityChecker {
+      constructor() {
+        this.positionCounter = 0;
+        this.positions = [];
+      }
+
+      check(regex) {
+        // Parse
+        const parser = new Parser(regex);
+        const ast = parser.parse();
+
+        // Check empty-word ambiguity
+        const emptyWays = this.countEmptyMatches(ast);
+        if (emptyWays >= 2) {
+          return { ambiguous: true, witness: 'ε (empty word)' };
+        }
+
+        // Build Glushkov automaton
+        this.positionCounter = 0;
+        this.positions = [];
+        const labeled = this.labelPositions(ast);
+        
+        const nullable = this.computeNullable(labeled);
+        const first = this.computeFirst(labeled);
+        const last = this.computeLast(labeled);
+        const follow = this.computeFollow(labeled, first, last);
+
+        const n = this.positionCounter;
+        if (n === 0) {
+          return { ambiguous: false };
+        }
+
+        // Build transition function
+        const transitions = this.buildTransitions(n, follow);
+
+        // Accepting states
+        const accepting = new Set();
+        for (const p of last) accepting.add(p);
+        if (nullable) accepting.add(-1); // start state
+
+        // Search product automaton
+        const result = this.searchProduct(n, transitions, accepting, labeled);
+        return result;
+      }
+
+      countEmptyMatches(node) {
+        if (!node) return 0;
+        switch (node.type) {
+          case 'sym':
+            return 0;
+          case 'cat': {
+            const leftWays = this.countEmptyMatches(node.left);
+            if (leftWays === 0) return 0;
+            const rightWays = this.countEmptyMatches(node.right);
+            return Math.min(2, leftWays * rightWays);
+          }
+          case 'union': {
+            const leftWays = this.countEmptyMatches(node.left);
+            const rightWays = this.countEmptyMatches(node.right);
+            return Math.min(2, leftWays + rightWays);
+          }
+          case 'star':
+            // Star can always match empty once. If child can match empty, it's ambiguous.
+            const childWays = this.countEmptyMatches(node.child);
+            return childWays > 0 ? 2 : 1;
+          default:
+            return 1; // eps
+        }
+      }
+
+      labelPositions(node) {
+        if (!node) return node;
+        switch (node.type) {
+          case 'sym': {
+            const pos = this.positionCounter++;
+            this.positions.push({ pos, symbol: node.value });
+            return { ...node, position: pos };
+          }
+          case 'cat':
+            return { ...node, left: this.labelPositions(node.left), right: this.labelPositions(node.right) };
+          case 'union':
+            return { ...node, left: this.labelPositions(node.left), right: this.labelPositions(node.right) };
+          case 'star':
+            return { ...node, child: this.labelPositions(node.child) };
+          default:
+            return node;
+        }
+      }
+
+      computeNullable(node) {
+        if (!node) return true;
+        switch (node.type) {
+          case 'sym': return false;
+          case 'cat': return this.computeNullable(node.left) && this.computeNullable(node.right);
+          case 'union': return this.computeNullable(node.left) || this.computeNullable(node.right);
+          case 'star': return true;
+          default: return true;
+        }
+      }
+
+      computeFirst(node) {
+        const result = new Set();
+        this.collectFirst(node, result);
+        return result;
+      }
+
+      collectFirst(node, set) {
+        if (!node) return;
+        switch (node.type) {
+          case 'sym':
+            set.add(node.position);
+            break;
+          case 'cat':
+            this.collectFirst(node.left, set);
+            if (this.computeNullable(node.left)) {
+              this.collectFirst(node.right, set);
+            }
+            break;
+          case 'union':
+            this.collectFirst(node.left, set);
+            this.collectFirst(node.right, set);
+            break;
+          case 'star':
+            this.collectFirst(node.child, set);
+            break;
+        }
+      }
+
+      computeLast(node) {
+        const result = new Set();
+        this.collectLast(node, result);
+        return result;
+      }
+
+      collectLast(node, set) {
+        if (!node) return;
+        switch (node.type) {
+          case 'sym':
+            set.add(node.position);
+            break;
+          case 'cat':
+            if (this.computeNullable(node.right)) {
+              this.collectLast(node.left, set);
+            }
+            this.collectLast(node.right, set);
+            break;
+          case 'union':
+            this.collectLast(node.left, set);
+            this.collectLast(node.right, set);
+            break;
+          case 'star':
+            this.collectLast(node.child, set);
+            break;
+        }
+      }
+
+      computeFollow(node, first, last) {
+        const follow = new Map();
+        this.collectFollow(node, first, last, follow);
+        return follow;
+      }
+
+      collectFollow(node, first, last, followMap) {
+        if (!node) return;
+        switch (node.type) {
+          case 'sym':
+            break;
+          case 'cat': {
+            const lastLeft = this.collectLastAsSet(node.left);
+            const firstRight = this.collectFirstAsSet(node.right);
+            for (const p of lastLeft) {
+              if (!followMap.has(p)) followMap.set(p, new Set());
+              for (const q of firstRight) followMap.get(p).add(q);
+            }
+            this.collectFollow(node.left, first, last, followMap);
+            this.collectFollow(node.right, first, last, followMap);
+            break;
+          }
+          case 'union':
+            this.collectFollow(node.left, first, last, followMap);
+            this.collectFollow(node.right, first, last, followMap);
+            break;
+          case 'star': {
+            const lastSet = this.collectLastAsSet(node.child);
+            const firstSet = this.collectFirstAsSet(node.child);
+            for (const p of lastSet) {
+              if (!followMap.has(p)) followMap.set(p, new Set());
+              for (const q of firstSet) followMap.get(p).add(q);
+            }
+            this.collectFollow(node.child, first, last, followMap);
+            break;
+          }
+        }
+      }
+
+      collectFirstAsSet(node) {
+        const set = new Set();
+        this.collectFirst(node, set);
+        return set;
+      }
+
+      collectLastAsSet(node) {
+        const set = new Set();
+        this.collectLast(node, set);
+        return set;
+      }
+
+      buildTransitions(n, follow) {
+        const transitions = new Map();
+        // Start state (-1) transitions to all first positions
+        // Position p transitions to all positions in follow(p)
+        for (const [p, follows] of follow) {
+          for (const q of follows) {
+            const sym = this.positions.find(pos => pos.pos === q)?.symbol;
+            if (!transitions.has(p)) transitions.set(p, new Map());
+            if (!transitions.get(p).has(sym)) transitions.get(p).set(sym, []);
+            transitions.get(p).get(sym).push(q);
+          }
+        }
+        return transitions;
+      }
+
+      searchProduct(n, transitions, accepting, labeled) {
+        // Product state: (p, q) where p and q are states
+        // Start from (-1, -1)
+        const startState = [-1, -1];
+        
+        // BFS for reachability
+        const visited = new Set();
+        const queue = [startState];
+        visited.add(this.stateKey(startState));
+        
+        const reachable = new Set();
+        reachable.add(this.stateKey(startState));
+        
+        const parent = new Map();
+        parent.set(this.stateKey(startState), null);
+        
+        while (queue.length > 0) {
+          const [p, q] = queue.shift();
+          
+          // Get all symbols both can transition on
+          const pTrans = transitions.get(p) || new Map();
+          const qTrans = transitions.get(q) || new Map();
+          
+          for (const [sym, pTargets] of pTrans) {
+            const qTargets = qTrans.get(sym) || [];
+            for (const pNext of pTargets) {
+              for (const qNext of qTargets) {
+                const key = this.stateKey([pNext, qNext]);
+                if (!visited.has(key)) {
+                  visited.add(key);
+                  reachable.add(key);
+                  parent.set(key, { state: [p, q], symbol: sym });
+                  queue.push([pNext, qNext]);
+                }
+              }
+            }
+          }
+        }
+        
+        // Find co-reachable: states that can reach (accepting, accepting)
+        // Reverse BFS from accepting pairs
+        const coReachable = new Set();
+        const coQueue = [];
+        
+        for (const a of accepting) {
+          for (const b of accepting) {
+            const key = this.stateKey([a, b]);
+            if (reachable.has(key)) {
+              coReachable.add(key);
+              coQueue.push([a, b]);
+            }
+          }
+        }
+        
+        // Build reverse transitions
+        const reverseTrans = new Map();
+        for (const [from, syms] of transitions) {
+          for (const [sym, targets] of syms) {
+            for (const to of targets) {
+              if (!reverseTrans.has(to)) reverseTrans.set(to, new Map());
+              if (!reverseTrans.get(to).has(sym)) reverseTrans.get(to).set(sym, []);
+              reverseTrans.get(to).get(sym).push(from);
+            }
+          }
+        }
+        
+        const coVisited = new Set(coReachable);
+        while (coQueue.length > 0) {
+          const [p, q] = coQueue.shift();
+          
+          const pRev = reverseTrans.get(p) || new Map();
+          const qRev = reverseTrans.get(q) || new Map();
+          
+          for (const [sym, pSources] of pRev) {
+            const qSources = qRev.get(sym) || [];
+            for (const pPrev of pSources) {
+              for (const qPrev of qSources) {
+                const key = this.stateKey([pPrev, qPrev]);
+                if (!coVisited.has(key) && reachable.has(key)) {
+                  coVisited.add(key);
+                  coReachable.add(key);
+                  coQueue.push([pPrev, qPrev]);
+                }
+              }
+            }
+          }
+        }
+        
+        // Check if any (p, q) with p != q is both reachable and co-reachable
+        for (const key of reachable) {
+          if (coReachable.has(key)) {
+            const [p, q] = this.parseStateKey(key);
+            if (p !== q) {
+              // Found ambiguity! Reconstruct witness
+              const witness = this.reconstructWitness([p, q], parent, reverseTrans, accepting);
+              return { ambiguous: true, witness };
+            }
+          }
+        }
+        
+        return { ambiguous: false };
+      }
+
+      stateKey([p, q]) {
+        return `${p}:${q}`;
+      }
+
+      parseStateKey(key) {
+        const [p, q] = key.split(':').map(Number);
+        return [p, q];
+      }
+
+      reconstructWitness(divergentState, parent, reverseTrans, accepting) {
+        // Simplified: just return a description
+        const [p, q] = divergentState;
+        const pSym = this.positions.find(pos => pos.pos === p)?.symbol || '?';
+        const qSym = this.positions.find(pos => pos.pos === q)?.symbol || '?';
+        return `Diverges at positions ${p} and ${q} (symbols ${pSym}, ${qSym})`;
+      }
+    }
+
+    // ============ UI HANDLING ============
+    const checker = new AmbiguityChecker();
     const checkBtn = document.getElementById('check');
     const regexInput = document.getElementById('regex');
     const resultDiv = document.getElementById('result');
@@ -87,16 +497,21 @@
           return;
         }
         
-        const result = checkAmbiguity(regexValue);
-        
-        if (result.ambiguous) {
-          resultDiv.innerHTML = '<p class="verdict bad">⚠ Ambiguous</p><p class="witness">Some word can match this regex in multiple ways.</p>';
-          resultDiv.className = 'result-box bad';
-        } else {
-          resultDiv.innerHTML = '<p class="verdict good">✓ Unambiguous</p><p class="witness">Each word has exactly one matching path.</p>';
-          resultDiv.className = 'result-box good';
+        try {
+          const result = checker.check(regexValue);
+          
+          if (result.ambiguous) {
+            resultDiv.innerHTML = `<p class="verdict bad">⚠ Ambiguous</p><p class="witness">${result.witness ? 'Witness: ' + result.witness : 'Some word can match this regex in multiple ways.'}</p>`;
+            resultDiv.className = 'result-box bad';
+          } else {
+            resultDiv.innerHTML = '<p class="verdict good">✓ Unambiguous</p><p class="witness">Each word has exactly one matching path.</p>';
+            resultDiv.className = 'result-box good';
+          }
+        } catch (e) {
+          resultDiv.innerHTML = `<p class="verdict bad">⚠ Error: ${e.message}</p>`;
+          resultDiv.className = 'result-box error';
         }
-      }, 500);
+      }, 300);
     });
 
     document.querySelectorAll('.chip').forEach(chip => {
