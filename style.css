@@ -375,3 +375,5 @@ flex-direction: column;
 padding: 1.25rem;
 }
 }
+
+body { background: red; }
