@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Regex Ambiguity Checker</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main>
+    <h1>Is your regex ambiguous?</h1>
+    <p class="lead">Enter a regular expression using only <code>0</code>, <code>1</code>, <code>*</code>, <code>(</code> and <code>)</code>. A regex is ambiguous if some word can match it in more than one way.</p>
+
+    <label for="regex">Regular expression</label>
+    <div class="row">
+      <input id="regex" type="text" value="0*0*" autocomplete="off" spellcheck="false">
+      <button id="check" type="button">Check</button>
+    </div>
+
+    <div id="result" role="status" aria-live="polite"></div>
+
+    <p class="examples">Try:
+      <button type="button" class="ex">(01)*</button>
+      <button type="button" class="ex">0*1*</button>
+      <button type="button" class="ex">0*0*</button>
+      <button type="button" class="ex">(00)*(000)*</button>
+      <button type="button" class="ex">(0*)*</button>
+    </p>
+
+    <details>
+      <summary>How it works</summary>
+      <p>The expression is parsed, then converted to a position (Glushkov) automaton with one state per symbol. The automaton is paired with itself, and the regex is ambiguous exactly when two different states can be reached on the same word and both can still finish in accepting states. A star over something that can match the empty word is always ambiguous.</p>
+    </details>
+  </main>
+  <script src="script.js"></script>
+</body>
+</html>
