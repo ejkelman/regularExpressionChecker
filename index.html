@@ -1,4 +1,5 @@
 <!DOCTYPE html>
+
 <html lang="en">
 <head>
   <meta charset="utf-8">
@@ -11,26 +12,180 @@
     <h1>Is your regex ambiguous?</h1>
     <p class="lead">Enter a regular expression using only <code>0</code>, <code>1</code>, <code>*</code>, <code>(</code> and <code>)</code>. A regex is ambiguous if some word can match it in more than one way.</p>
 
-    <label for="regex">Regular expression</label>
-    <div class="row">
-      <input id="regex" type="text" value="0*0*" autocomplete="off" spellcheck="false">
-      <button id="check" type="button">Check</button>
+<label for="regex">Regular expression</label>
+<div class="row">
+  <input id="regex" type="text" value="0*0*" autocomplete="off" spellcheck="false">
+  <button id="check" type="button">Check</button>
+</div>
+
+<div id="result" role="status" aria-live="polite"></div>
+
+<p class="examples">Try:
+  <button type="button" class="ex">(01)*</button>
+  <button type="button" class="ex">0*1*</button>
+  <button type="button" class="ex">0*0*</button>
+  <button type="button" class="ex">(00)*(000)*</button>
+  <button type="button" class="ex">(0*)*</button>
+</p>
+
+<details>
+  <summary>How it works</summary>
+  <p>The expression is parsed, then converted to a position (Glushkov) automaton with one state per symbol. The automaton is paired with itself, and the regex is ambiguous exactly when two different states can be reached on the same word and both can still finish in accepting states. A star over something that can match the empty word is always ambiguous.</p>
+</details>
+
+<section class="info-section">
+  <h2>About This Project</h2>
+  
+  <div class="subsection">
+    <h3>Inspiration</h3>
+    <p>This project was inspired by the course material of <strong>MATH 249 - Introduction to Combinatorics (Advanced Level)</strong>, taken at University of Waterloo and taught by Professor Stephen Melczer. See more of the course material at <a href="https://enumeration.ca" target="_blank" rel="noopener">enumeration.ca</a>.</p>
+  </div>
+
+  <div class="subsection">
+    <h3>What is regex-ambiguity?</h3>
+    <p>A Python tool that determines whether a regular expression of the alphabet {0, 1} is unambiguous.</p>
+  </div>
+
+  <div class="subsection">
+    <h3>Allowed Syntax</h3>
+    <p>Only these characters are accepted:</p>
+    <p class="syntax-chars"><code>0</code>, <code>1</code>, <code>*</code>, <code>(</code>, <code>)</code></p>
+  </div>
+</section>
+
+<section class="info-section">
+  <h2>Quick Start</h2>
+  
+  <div class="subsection">
+    <h3>Command Line</h3>
+    <pre><code>python3 regex_ambiguity.py "0*0*"    # False  (ambiguous word: '0')
+
+python3 regex_ambiguity.py "(01)*"   # True</code></pre>
+</div>
+
+  <div class="subsection">
+    <h3>From Python</h3>
+    <pre><code>from regex_ambiguity import is_unambiguous, find_ambiguity
+
+is_unambiguous("(01)")      # True
+is_unambiguous("00*")       # False
+find_ambiguity("00")       # '0'   (a word that can be matched in 2+ ways)
+find_ambiguity("(01)*")      # None  (unambiguous)</code></pre>
+</div>
+</section>
+
+<section class="info-section">
+  <h2>What on Earth Are You Talking About?</h2>
+  
+  <div class="subsection">
+    <p>A <strong>regular expression</strong> is an expression of characters (in this case '0' and '1') and rules to combine them. It specifies a set of strings that can be constructed using that expression (which we call a <strong>regular language</strong>).</p>
+    <p>An expression is called <strong>unambiguous</strong> if there is only one way to get from the expression to each word in the language, and <strong>ambiguous</strong> if there exists a word that you can get to from the expression in more than one way.</p>
+  </div>
+
+  <div class="subsection">
+    <h3>Examples</h3>
+    
+    <div class="example-item">
+      <p><strong><code>0*0*</code> is ambiguous.</strong> The word <code>0</code> matches two ways: the first <code>0*</code> takes the <code>0</code> and the second takes nothing, or the first takes nothing and the second takes the <code>0</code>. Both give the same word, but they are different matches.</p>
     </div>
 
-    <div id="result" role="status" aria-live="polite"></div>
+    <div class="example-item">
+      <p><strong><code>(01)*</code> is unambiguous.</strong> Any word it accepts (<code>ε</code>, <code>01</code>, <code>0101</code>, ...) can only be split into <code>01</code> blocks one way.</p>
+    </div>
 
-    <p class="examples">Try:
-      <button type="button" class="ex">(01)*</button>
-      <button type="button" class="ex">0*1*</button>
-      <button type="button" class="ex">0*0*</button>
-      <button type="button" class="ex">(00)*(000)*</button>
-      <button type="button" class="ex">(0*)*</button>
-    </p>
+    <div class="example-item">
+      <p><strong><code>0*1*</code> is unambiguous.</strong> In any word like <code>0011</code>, the boundary between the 0s and the 1s is forced.</p>
+    </div>
 
-    <details>
-      <summary>How it works</summary>
-      <p>The expression is parsed, then converted to a position (Glushkov) automaton with one state per symbol. The automaton is paired with itself, and the regex is ambiguous exactly when two different states can be reached on the same word and both can still finish in accepting states. A star over something that can match the empty word is always ambiguous.</p>
-    </details>
+    <div class="example-item">
+      <p><strong><code>0*0</code> is unambiguous</strong>, even though it looks similar to <code>0*0*</code>. The final <code>0</code> is mandatory, so the split of <code>000</code> is always "<code>00</code> from the star, then <code>0</code>".</p>
+    </div>
+
+    <div class="example-item">
+      <p><strong><code>(0*)*</code> is ambiguous.</strong> The inner <code>0*</code> can match the empty word, so the outer star can repeat "nothing" any number of times. The empty word therefore has infinitely many matches. This tool treats any star over something that can match the empty word as ambiguous.</p>
+    </div>
+
+    <p class="note">Ambiguity is a property of the <em>expression</em>, not of the language it describes. <code>0*0*</code> and <code>0*</code> lead to exactly the same words, but <code>0*</code> is unambiguous and <code>0*0*</code> is not.</p>
+  </div>
+</section>
+
+<section class="info-section">
+  <h2>How the Algorithm Works</h2>
+  <p>The check runs in four steps.</p>
+
+  <div class="subsection">
+    <h3>1. Parse</h3>
+    <p>The input string is parsed by a small recursive-descent parser into a tree with four node types:</p>
+    <ul>
+      <li><code>eps</code> (empty word)</li>
+      <li><code>sym</code> (a <code>0</code> or <code>1</code>)</li>
+      <li><code>cat</code> (concatenation of two parts)</li>
+      <li><code>star</code> (repetition)</li>
+    </ul>
+    <p>Illegal characters, unbalanced parentheses, and a <code>*</code> with nothing to repeat raise a <code>ValueError</code>.</p>
+  </div>
+
+  <div class="subsection">
+    <h3>2. Check for Empty-Word Ambiguity</h3>
+    <p>For every subexpression, the code counts how many ways it can match the empty word (capped at 2). A star over anything that can match the empty word counts as 2, so such expressions are immediately reported ambiguous with the empty word as the witness. Doing this first also avoids loops of empty matches in the next step.</p>
+  </div>
+
+  <div class="subsection">
+    <h3>3. Build the Glushkov (Position) Automaton</h3>
+    <p>Each symbol occurrence in the regex is numbered. For <code>0*0*</code>, that's <code>0₁* 0₂*</code>. The automaton has one state per position plus a start state. It is built by computing, bottom-up over the tree:</p>
+    <ul>
+      <li><strong>nullable</strong>: can this part match the empty word?</li>
+      <li><strong>first</strong>: which positions can start a match?</li>
+      <li><strong>last</strong>: which positions can end a match?</li>
+      <li><strong>follow</strong>: which positions can come immediately after a given position?</li>
+    </ul>
+    <p>From these, the transitions are:</p>
+    <ul>
+      <li>start → each position in <code>first</code>, labeled by that position's symbol</li>
+      <li>position <code>p</code> → each position in <code>follow(p)</code>, labeled by that position's symbol</li>
+    </ul>
+    <p>The accepting states are the positions in <code>last</code> (plus the start state if the regex is nullable).</p>
+    <p>This automaton has no empty transitions, and each distinct way of matching a word corresponds to exactly one path through it. So the regex is ambiguous exactly when some word has two different accepting paths.</p>
+  </div>
+
+  <div class="subsection">
+    <h3>4. Search the Product Automaton</h3>
+    <p>To find two different paths on the same word, the code builds the <strong>product</strong> of the automaton with itself. A product state is a pair <code>(p, q)</code>, and it moves on a symbol only if both components can move on it. Walking in the product means "two runs reading the same word in lockstep".</p>
+    <p>The regex is <strong>ambiguous if and only if</strong> there is a pair <code>(p, q)</code> with <code>p ≠ q</code> that is:</p>
+    <ul>
+      <li><strong>reachable</strong> from <code>(start, start)</code>, meaning two runs can read the same prefix and end up in different states, and</li>
+      <li><strong>co-reachable</strong>, meaning from there both runs can continue on a common suffix and both end in accepting states.</li>
+    </ul>
+    <p>Reachability and co-reachability are both found with a breadth-first search. The search also records how it got there, so the tool can return an actual ambiguous word (the prefix that reaches the pair plus the suffix that finishes it).</p>
+  </div>
+
+  <div class="subsection">
+    <h3>Complexity</h3>
+    <p>With <code>n</code> symbol occurrences in the regex, the product has up to <code>n²</code> states, so the whole check runs in polynomial time (roughly <code>O(n⁴)</code> in the worst case with this simple implementation), which is instant for any regex a person would write.</p>
+  </div>
+</section>
+
+<section class="info-section">
+  <h2>Extra: One-Unambiguity</h2>
+  <p><code>is_one_unambiguous(regex)</code> checks a stricter property used by deterministic matchers (and XML schema languages): after reading each symbol, the next position is determined by one character of lookahead. Every one-unambiguous regex is unambiguous, but not the reverse. For example, <code>0*0</code> is unambiguous but not one-unambiguous, because on reading a <code>0</code> you can't yet tell whether it is the last one.</p>
+</section>
+
+<section class="info-section">
+  <h2>Running the Tests</h2>
+  <p>Install pytest (once), then run it from the repo folder:</p>
+  <pre><code>pip install pytest
+
+pytest</code></pre>
+
+  <p>The tests cover:</p>
+  <ol>
+    <li><strong>Known cases</strong>: lists of regexes that must come out ambiguous or unambiguous.</li>
+    <li><strong>Error handling</strong>: bad input must raise <code>ValueError</code>.</li>
+    <li><strong>Brute-force comparison</strong>: for 300 random regexes, the algorithm's answer is compared against a slow but obviously correct method that counts the matches of every binary word up to length 8.</li>
+    <li><strong>Witness check</strong>: the ambiguous word the tool returns must really have more than one match.</li>
+  </ol>
+</section>
+
   </main>
   <script src="script.js"></script>
 </body>
