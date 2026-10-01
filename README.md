@@ -8,9 +8,7 @@ A Python tool that determines whether a regular expression of the alphabet {0, 1
 
 Only these characters are accepted:
 
-| `0`, `1` | 
-| `*` | 
-| `(` `)` | 
+`0`, `1`, `*`, `(` `)`
 
 
 
