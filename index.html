@@ -156,23 +156,23 @@
         const nullable = this.computeNullable(labeled);
         const first = this.computeFirst(labeled);
         const last = this.computeLast(labeled);
-        const follow = this.computeFollow(labeled, first, last);
+        const follow = this.computeFollow(labeled);
 
         const n = this.positionCounter;
         if (n === 0) {
           return { ambiguous: false };
         }
 
-        // Build transition function
-        const transitions = this.buildTransitions(n, follow);
+        // Build transition function (includes start state -1)
+        const transitions = this.buildTransitions(first, follow);
 
         // Accepting states
         const accepting = new Set();
         for (const p of last) accepting.add(p);
-        if (nullable) accepting.add(-1); // start state
+        if (nullable) accepting.add(-1);
 
         // Search product automaton
-        const result = this.searchProduct(n, transitions, accepting, labeled);
+        const result = this.searchProduct(transitions, accepting);
         return result;
       }
 
@@ -193,11 +193,10 @@
             return Math.min(2, leftWays + rightWays);
           }
           case 'star':
-            // Star can always match empty once. If child can match empty, it's ambiguous.
             const childWays = this.countEmptyMatches(node.child);
             return childWays > 0 ? 2 : 1;
           default:
-            return 1; // eps
+            return 1;
         }
       }
 
@@ -287,13 +286,13 @@
         }
       }
 
-      computeFollow(node, first, last) {
+      computeFollow(node) {
         const follow = new Map();
-        this.collectFollow(node, first, last, follow);
+        this.collectFollow(node, follow);
         return follow;
       }
 
-      collectFollow(node, first, last, followMap) {
+      collectFollow(node, followMap) {
         if (!node) return;
         switch (node.type) {
           case 'sym':
@@ -305,13 +304,13 @@
               if (!followMap.has(p)) followMap.set(p, new Set());
               for (const q of firstRight) followMap.get(p).add(q);
             }
-            this.collectFollow(node.left, first, last, followMap);
-            this.collectFollow(node.right, first, last, followMap);
+            this.collectFollow(node.left, followMap);
+            this.collectFollow(node.right, followMap);
             break;
           }
           case 'union':
-            this.collectFollow(node.left, first, last, followMap);
-            this.collectFollow(node.right, first, last, followMap);
+            this.collectFollow(node.left, followMap);
+            this.collectFollow(node.right, followMap);
             break;
           case 'star': {
             const lastSet = this.collectLastAsSet(node.child);
@@ -320,7 +319,7 @@
               if (!followMap.has(p)) followMap.set(p, new Set());
               for (const q of firstSet) followMap.get(p).add(q);
             }
-            this.collectFollow(node.child, first, last, followMap);
+            this.collectFollow(node.child, followMap);
             break;
           }
         }
@@ -338,9 +337,17 @@
         return set;
       }
 
-      buildTransitions(n, follow) {
+      buildTransitions(first, follow) {
         const transitions = new Map();
+        
         // Start state (-1) transitions to all first positions
+        for (const pos of first) {
+          const sym = this.positions.find(p => p.pos === pos)?.symbol;
+          if (!transitions.has(-1)) transitions.set(-1, new Map());
+          if (!transitions.get(-1).has(sym)) transitions.get(-1).set(sym, []);
+          transitions.get(-1).get(sym).push(pos);
+        }
+        
         // Position p transitions to all positions in follow(p)
         for (const [p, follows] of follow) {
           for (const q of follows) {
@@ -350,15 +357,14 @@
             transitions.get(p).get(sym).push(q);
           }
         }
+        
         return transitions;
       }
 
-      searchProduct(n, transitions, accepting, labeled) {
-        // Product state: (p, q) where p and q are states
-        // Start from (-1, -1)
+      searchProduct(transitions, accepting) {
         const startState = [-1, -1];
         
-        // BFS for reachability
+        // BFS for reachability from (start, start)
         const visited = new Set();
         const queue = [startState];
         visited.add(this.stateKey(startState));
@@ -366,13 +372,9 @@
         const reachable = new Set();
         reachable.add(this.stateKey(startState));
         
-        const parent = new Map();
-        parent.set(this.stateKey(startState), null);
-        
         while (queue.length > 0) {
           const [p, q] = queue.shift();
           
-          // Get all symbols both can transition on
           const pTrans = transitions.get(p) || new Map();
           const qTrans = transitions.get(q) || new Map();
           
@@ -384,7 +386,6 @@
                 if (!visited.has(key)) {
                   visited.add(key);
                   reachable.add(key);
-                  parent.set(key, { state: [p, q], symbol: sym });
                   queue.push([pNext, qNext]);
                 }
               }
@@ -392,8 +393,18 @@
           }
         }
         
-        // Find co-reachable: states that can reach (accepting, accepting)
-        // Reverse BFS from accepting pairs
+        // Reverse BFS for co-reachability (can reach accepting pair)
+        const reverseTrans = new Map();
+        for (const [from, syms] of transitions) {
+          for (const [sym, targets] of syms) {
+            for (const to of targets) {
+              if (!reverseTrans.has(to)) reverseTrans.set(to, new Map());
+              if (!reverseTrans.get(to).has(sym)) reverseTrans.get(to).set(sym, []);
+              reverseTrans.get(to).get(sym).push(from);
+            }
+          }
+        }
+        
         const coReachable = new Set();
         const coQueue = [];
         
@@ -403,18 +414,6 @@
             if (reachable.has(key)) {
               coReachable.add(key);
               coQueue.push([a, b]);
-            }
-          }
-        }
-        
-        // Build reverse transitions
-        const reverseTrans = new Map();
-        for (const [from, syms] of transitions) {
-          for (const [sym, targets] of syms) {
-            for (const to of targets) {
-              if (!reverseTrans.has(to)) reverseTrans.set(to, new Map());
-              if (!reverseTrans.get(to).has(sym)) reverseTrans.get(to).set(sym, []);
-              reverseTrans.get(to).get(sym).push(from);
             }
           }
         }
@@ -441,14 +440,13 @@
           }
         }
         
-        // Check if any (p, q) with p != q is both reachable and co-reachable
+        // Check for divergent state (p ≠ q) that is both reachable and co-reachable
         for (const key of reachable) {
           if (coReachable.has(key)) {
             const [p, q] = this.parseStateKey(key);
             if (p !== q) {
-              // Found ambiguity! Reconstruct witness
-              const witness = this.reconstructWitness([p, q], parent, reverseTrans, accepting);
-              return { ambiguous: true, witness };
+              const word = this.reconstructWord([p, q], transitions, accepting);
+              return { ambiguous: true, witness: word ? `"${word}"` : 'some word' };
             }
           }
         }
@@ -465,12 +463,56 @@
         return [p, q];
       }
 
-      reconstructWitness(divergentState, parent, reverseTrans, accepting) {
-        // Simplified: just return a description
-        const [p, q] = divergentState;
-        const pSym = this.positions.find(pos => pos.pos === p)?.symbol || '?';
-        const qSym = this.positions.find(pos => pos.pos === q)?.symbol || '?';
-        return `Diverges at positions ${p} and ${q} (symbols ${pSym}, ${qSym})`;
+      reconstructWord(divergentState, transitions, accepting) {
+        // BFS to find path from start to divergent state, then to accepting
+        const [targetP, targetQ] = divergentState;
+        
+        // Forward BFS to reach divergent state
+        const startState = [-1, -1];
+        const visited = new Map();
+        visited.set(this.stateKey(startState), { word: '', parent: null });
+        
+        const queue = [startState];
+        while (queue.length > 0) {
+          const [p, q] = queue.shift();
+          const current = visited.get(this.stateKey([p, q]));
+          
+          if (p === targetP && q === targetQ) {
+            // Now extend to accepting state
+            const pTrans = transitions.get(p) || new Map();
+            const qTrans = transitions.get(q) || new Map();
+            
+            for (const [sym, pTargets] of pTrans) {
+              const qTargets = qTrans.get(sym) || [];
+              for (const pNext of pTargets) {
+                for (const qNext of qTargets) {
+                  if (accepting.has(pNext) && accepting.has(qNext)) {
+                    return current.word + sym;
+                  }
+                }
+              }
+            }
+            return current.word;
+          }
+          
+          const pTrans = transitions.get(p) || new Map();
+          const qTrans = transitions.get(q) || new Map();
+          
+          for (const [sym, pTargets] of pTrans) {
+            const qTargets = qTrans.get(sym) || [];
+            for (const pNext of pTargets) {
+              for (const qNext of qTargets) {
+                const key = this.stateKey([pNext, qNext]);
+                if (!visited.has(key)) {
+                  visited.set(key, { word: current.word + sym, parent: [p, q] });
+                  queue.push([pNext, qNext]);
+                }
+              }
+            }
+          }
+        }
+        
+        return null;
       }
     }
 
@@ -501,7 +543,7 @@
           const result = checker.check(regexValue);
           
           if (result.ambiguous) {
-            resultDiv.innerHTML = `<p class="verdict bad">⚠ Ambiguous</p><p class="witness">${result.witness ? 'Witness: ' + result.witness : 'Some word can match this regex in multiple ways.'}</p>`;
+            resultDiv.innerHTML = `<p class="verdict bad">⚠ Ambiguous</p><p class="witness">Witness: ${result.witness}</p>`;
             resultDiv.className = 'result-box bad';
           } else {
             resultDiv.innerHTML = '<p class="verdict good">✓ Unambiguous</p><p class="witness">Each word has exactly one matching path.</p>';
